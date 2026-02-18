@@ -1,0 +1,3 @@
+rootProject.name = 'pz-boilerplate-intelliJ'
+
+include 'boilerplate-api', 'boilerplate-engine', 'boilerplate-cli', 'boilerplate-tools'

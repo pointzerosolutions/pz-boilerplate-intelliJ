@@ -1,0 +1,13 @@
+plugins {
+    id 'application'
+}
+
+dependencies {
+    implementation project(':boilerplate-api')
+    implementation project(':boilerplate-engine')
+}
+
+application {
+    applicationName = 'boilerplate'
+    mainClass = 'com.example.boilerplate.cli.Main'
+}

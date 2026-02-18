@@ -1,0 +1,203 @@
+plugins {
+    id 'base'
+}
+
+import groovy.json.JsonOutput
+import java.security.MessageDigest
+
+def versionFile = file('VERSION')
+def resolvedVersion = versionFile.exists() ? versionFile.text.trim() : '0.1.0'
+if (!resolvedVersion) {
+    throw new GradleException('VERSION file is empty')
+}
+
+allprojects {
+    group = 'com.example.boilerplate'
+    version = resolvedVersion
+
+    repositories {
+        mavenCentral()
+    }
+}
+
+def sha256Hex = { File file ->
+    MessageDigest digest = MessageDigest.getInstance('SHA-256')
+    file.withInputStream { input ->
+        byte[] buffer = new byte[8192]
+        int read
+        while ((read = input.read(buffer)) >= 0) {
+            digest.update(buffer, 0, read)
+        }
+    }
+    return digest.digest().collect { String.format('%02x', it) }.join()
+}
+
+tasks.register('versionInfo') {
+    group = 'release'
+    doLast { println resolvedVersion }
+}
+
+tasks.register('versionBump', Exec) {
+    group = 'release'
+    description = 'Bump VERSION via VERSION_PART=major|minor|patch|prerelease'
+    doFirst {
+        String part = (System.getenv('VERSION_PART') ?: '').trim()
+        if (!part) {
+            throw new GradleException('Missing VERSION_PART')
+        }
+        commandLine 'python3', 'tools/versioning.py', '--file', 'VERSION', 'bump', '--part', part, '--preid', (System.getenv('VERSION_PREID') ?: 'beta')
+    }
+}
+
+tasks.register('previewManifest') {
+    group = 'build'
+    description = 'Generates placeholder preview artifacts'
+    doLast {
+        file('preview').mkdirs()
+        file('preview/app-output.txt').text = 'placeholder output\n'
+    }
+}
+
+tasks.register('versionStamp') {
+    group = 'documentation'
+    doLast {
+        File out = file('preview/version.json')
+        out.parentFile.mkdirs()
+        out.text = JsonOutput.prettyPrint(JsonOutput.toJson([
+            schemaVersion: '1',
+            generatedAt  : new Date().format("yyyy-MM-dd'T'HH:mm:ssXXX"),
+            version      : resolvedVersion
+        ])) + '\n'
+    }
+}
+
+tasks.register('issuesLogTickle', Exec) {
+    group = 'documentation'
+    commandLine 'python3', 'tools/issues_log_tickle.py', '--issues', 'docs/issues-log.csv', '--output', 'preview/issues-log-tickle.json', '--enforce'
+}
+
+tasks.register('issuesEffectivenessReport', Exec) {
+    group = 'documentation'
+    dependsOn('issuesLogTickle')
+    commandLine 'python3', 'tools/issues_effectiveness_report.py',
+        '--issues', 'docs/issues-log.csv',
+        '--tickle', 'preview/issues-log-tickle.json',
+        '--progress', 'docs/project-plan-progress.csv',
+        '--fidelity', 'preview/fidelity-report.json',
+        '--output', 'preview/issues-effectiveness.json'
+}
+
+tasks.register('documentationManifest') {
+    group = 'documentation'
+    dependsOn('previewManifest')
+    dependsOn('versionStamp')
+    dependsOn('issuesLogTickle')
+    doLast {
+        File output = file('preview/documentation-manifest.json')
+        output.parentFile.mkdirs()
+        List<File> tracked = [
+            file('AI-POLICY.md'),
+            file('README.md'),
+            file('VERSION'),
+            file('docs/project-plan.md'),
+            file('docs/project-plan-progress.csv'),
+            file('docs/issues-log.csv'),
+            file('preview/version.json'),
+            file('preview/issues-log-tickle.json'),
+            file('preview/app-output.txt')
+        ]
+        String generatedAt = new Date().format("yyyy-MM-dd'T'HH:mm:ssXXX")
+        String entries = tracked.collect { File f ->
+            String rel = projectDir.toPath().relativize(f.toPath()).toString().replace('\\', '/')
+            String hash = f.exists() ? sha256Hex(f) : ''
+            String size = f.exists() ? Long.toString(f.length()) : '0'
+            return "    {\"path\": \"${rel}\", \"exists\": ${f.exists()}, \"sizeBytes\": ${size}, \"sha256\": \"${hash}\"}"
+        }.join(',\n')
+        output.text = "{\n" +
+            "  \"schemaVersion\": \"1\",\n" +
+            "  \"generatedAt\": \"${generatedAt}\",\n" +
+            "  \"files\": [\n" + entries + "\n  ]\n" +
+            "}\n"
+    }
+}
+
+tasks.register('createRollbackCheckpoint', Exec) {
+    group = 'release'
+    dependsOn('documentationManifest')
+    doFirst {
+        List<String> cmd = [
+            'python3', 'tools/rollback_manager.py',
+            '--root', '.',
+            '--base', 'preview/checkpoints',
+            '--manifest', 'preview/documentation-manifest.json',
+            'create'
+        ]
+        String label = (System.getenv('CHECKPOINT_LABEL') ?: '').trim()
+        if (label) {
+            cmd.addAll(['--label', label])
+        }
+        commandLine cmd
+    }
+}
+
+tasks.register('listRollbackCheckpoints', Exec) {
+    group = 'release'
+    commandLine 'python3', 'tools/rollback_manager.py', '--root', '.', '--base', 'preview/checkpoints', 'list'
+}
+
+tasks.register('rollbackCheckpoint', Exec) {
+    group = 'release'
+    doFirst {
+        String checkpointId = (System.getenv('CHECKPOINT_ID') ?: '').trim()
+        if (!checkpointId) {
+            throw new GradleException('Missing CHECKPOINT_ID')
+        }
+        List<String> cmd = [
+            'python3', 'tools/rollback_manager.py', '--root', '.', '--base', 'preview/checkpoints', 'restore', '--id', checkpointId
+        ]
+        String applyFlag = (System.getenv('ROLLBACK_APPLY') ?: '').trim().toLowerCase()
+        if (applyFlag == 'true' || applyFlag == '1' || applyFlag == 'yes') {
+            cmd.add('--apply')
+        }
+        commandLine cmd
+    }
+}
+
+tasks.register('prodBuild') {
+    group = 'build'
+    description = 'Production build path without test compilation/execution'
+    dependsOn(':boilerplate-api:jar')
+    dependsOn(':boilerplate-engine:jar')
+    dependsOn(':boilerplate-cli:installDist')
+    dependsOn(':boilerplate-cli:distZip')
+}
+
+tasks.register('qualityGate') {
+    group = 'verification'
+    dependsOn(':boilerplate-engine:test')
+    dependsOn('documentationManifest')
+}
+
+tasks.named('build') {
+    dependsOn('documentationManifest')
+}
+
+subprojects {
+    apply plugin: 'java'
+
+    java {
+        toolchain {
+            languageVersion = JavaLanguageVersion.of(21)
+        }
+    }
+
+    tasks.withType(Test).configureEach {
+        useJUnitPlatform()
+    }
+
+    dependencies {
+        testImplementation platform('org.junit:junit-bom:5.10.2')
+        testImplementation 'org.junit.jupiter:junit-jupiter'
+        testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+    }
+}

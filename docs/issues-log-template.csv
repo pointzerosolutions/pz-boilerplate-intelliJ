@@ -1,0 +1,2 @@
+id,status,severity,title,components,opened_on,last_reviewed,owner,notes
+ISSUE-XXX,Open,Low,Issue title,"pathA|pathB",2026-02-18,2026-02-18,Human+AI,Short notes

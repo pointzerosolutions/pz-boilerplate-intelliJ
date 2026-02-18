@@ -1,0 +1,2 @@
+id,status,severity,title,components,opened_on,last_reviewed,owner,notes
+ISSUE-001,Open,Low,Replace placeholder issue with real issue entries,"docs/issues-log.csv|AI-POLICY.md",2026-02-18,2026-02-18,Human+AI,Template seed issue.

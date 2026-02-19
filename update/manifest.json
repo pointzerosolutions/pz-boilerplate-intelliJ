@@ -1,0 +1,11 @@
+{
+  "schemaVersion": "1",
+  "sourceRepo": "afp-converter",
+  "sourceBranch": "chore/ci-prodbuild-boilerplate-kickoff",
+  "sourceCommit": "3f41977",
+  "payloads": [
+    "payloads/2026-02-18-pm-realm-console-sql-rules-rollup",
+    "payloads/2026-02-19-namespace-root-solutions-pointzero-symphony"
+  ],
+  "notes": "Payload-only drop. No merge or in-repo integration performed."
+}
